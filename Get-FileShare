@@ -1,0 +1,158 @@
+<#
+.SYNOPSIS
+	Displays a list of Windows file shares.
+	
+.DESCRIPTION
+	Displays a list of Windows file shares in an Active Directory environment. This function supports filtering
+	of search criteria and allows ouput in CSV format.
+
+.PARAMETER ComputerName
+	Not mandatory. The parameter Computername is used to designate the target of the script. It defaults to the 
+    local computer. Mutually exclusive with the OrganizationalUnit, Group, and Filter parameters. 
+	
+.PARAMETER OrganizationalUnit
+	Not mandatory. The parameter OrganizationalUnit is used to designate an ActiveDirectory OU to perform the 
+	search on.
+	Accepts FQDNs only.
+	
+.PARAMETER Group
+	Not mandatory. The parameter Group is used to designate an ActiveDirectory security group to perform the 
+	search on.
+	
+.PARAMETER Filter
+	Not mandatory. The parameter Filter allows you to filter the OrganizationalUnit parameter results by computer
+	name using regular expressions. Defaults to "*".
+
+.PARAMETER NoDefaults
+    Not mandatory. The NoDefaults switch causes the script to return only those fileshares that are user-
+    created. It expressly exempts ADMIN$, C$, IPC$, and print$.
+
+.PARAMETER Output
+	Not mandatry. The parameter Output is used to determine how the script will output its results. It defaults 
+	to outputing to the screen. 
+	
+.EXAMPLE
+	The example below outputs the local computer fileshares and path to the screen.
+	PS C:\> Get-FileShare
+	
+.EXAMPLE
+	The example below outputs the fileshares of all computers in the "Computers" ADS OU and outputs to the screen.
+	PS C:\> Get-FileShare -OrganizationalUnit "OU=Computers,DC=Example,DC=Contoso,DC=Com"
+	
+.TODO
+	Error handling. I'm bad at it. 
+
+.REQUIREMENTS
+    If using the OrganizationalUnit or Group parameters, the ActiveDirectory module will need to be installed.
+    Additionally, administrator rights - either local per box or domain - are required in order to pull the
+    file share listing via WMI.
+	
+.NOTES
+	Author: Austin Manuel
+	Last Edit: 2019-04-17
+	Version 1.0 - initial release of Get-FileShare
+#>
+	[cmdletbinding(DefaultParameterSetName="Default")]
+	Param (
+		[Parameter(Mandatory=$false,ParameterSetName="SingleHost")][string]$ComputerName = $env:computername,
+		[Parameter(Mandatory=$false,ParameterSetName="ADS")][string]$OrganizationalUnit,		
+		[Parameter(Mandatory=$false,ParameterSetName="ADS")][string]$Group,
+		[Parameter(Mandatory=$false,ParameterSetName="ADS")][String[]]$Filter = "*", 
+    [Parameter(Mandatory=$false)][Switch]$NoDefaults,
+		[Parameter(Mandatory=$false)][ValidateSet("Screen","CSV")][string]$Output = "Screen"
+		)
+
+	Begin {
+	
+    # The entire function of the Begin block in this script is to generate a list of computers to
+    # process further on. It calls the ActiveDirectory module only if you are going to use it.
+
+		If ($OrganizationalUnit -or $Group) {
+		
+			Import-Module ActiveDirectory
+	
+			If ($OrganizationalUnit){
+			
+				$UnfilteredComputers = Get-ADComputer -Filter * -SearchBase $OrganizationalUnit
+				
+				$OUComputers = ForEach ($Expression in $Filter) {
+			
+					$UnfilteredComputers | Where-Object { $_.Name -match $Expression }|
+					Select-Object -ExpandProperty Name | Sort
+					
+				}	
+        
+				If (-Not($Group)){ $Computers = $OUComputers}
+			}
+			
+			If ($Group) {
+			
+				$UnfilteredComputers = Get-ADComputer -Filter * -Properties MemberOf | 
+				Where-Object {$_.MemberOf -Match $Group}
+				
+				$GroupComputers = ForEach ($Expression in $Filter) {
+			
+					$UnfilteredComputers | Where-Object { $_.Name -match $Expression } |
+					Select-Object -ExpandProperty Name | Sort
+				
+				}
+        
+				If (-Not($OUComputers)){ $Computers = $GroupComputers}
+			}
+		
+			If ($OrganizationalUnit -and $Group){
+			
+				$Computers = ForEach ($computer in $OUComputers){
+					if ($GroupComputers -contains $computer) {
+						Write-Output $computers
+					}
+				}
+				
+			}
+			
+		} Else {
+		
+			$Computers = $ComputerName
+		
+		}
+		
+	}
+	
+	Process {
+
+		ForEach ($Computer in $Computers)  {
+
+            $Shares = Get-WMIObject -Class Win32_Share -Computer $Computer
+
+        }
+
+        If ($NoDefaults){
+
+            $Shares = $Shares | Where-Object {
+
+                $_.Name -ne "ADMIN$" -and
+                $_.Name -ne "C$" -and
+                $_.Name -ne "IPC$" -and
+                $_.Name -ne "print$"
+
+            }
+        }
+
+        $Shares = $Shares | Select-Object Name, Path
+	}
+
+	End {
+
+		If ($Output -eq "CSV"){
+
+            $Shares | ForEach { Write-Output "$computer,$( $_.Name ),$( $_.Path )" }
+        
+        } Else {
+
+            ForEach ($share in $Shares){
+
+                Write-Host $Share.Name, $share.path
+
+            }
+        }
+	}
