@@ -1,3 +1,4 @@
+```powershell
 <#
 .SYNOPSIS
 	Displays a list of Windows file shares.
@@ -156,3 +157,4 @@
             }
         }
 }
+```
